@@ -55,7 +55,7 @@ static inline u32 mdss_mdp_pipe_read(struct mdss_mdp_pipe *pipe, u32 reg)
 }
 
 static u32 mdss_mdp_smp_mmb_reserve(struct mdss_mdp_pipe *pipe, struct mdss_mdp_pipe_smp_map *smp_map,
-	size_t n)
+	size_t n, bool force_alloc)
 {
 	u32 i, mmb;
 	u32 fixed_cnt = bitmap_weight(smp_map->fixed, SMP_MB_CNT);
@@ -73,7 +73,7 @@ static u32 mdss_mdp_smp_mmb_reserve(struct mdss_mdp_pipe *pipe, struct mdss_mdp_
 	 * that calls for change in smp configuration (addition/removal
 	 * of smp blocks), so that fallback solution happens.
 	 */
-	if (pipe->src_fmt->is_yuv || (pipe->flags & MDP_BACKEND_COMPOSITION)) {
+	if (pipe->src_fmt->is_yuv || !force_alloc) {
 		if (i != 0 && n != i) {
 			pr_debug("Can't change mmb config, num_blks: %d alloc: %d\n",
 			n, i);
@@ -218,6 +218,7 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 	struct mdss_mdp_plane_sizes ps;
 	int i;
 	int rc = 0, rot_mode = 0;
+	bool force_alloc = 0;
 	u32 nlines, format;
 	u16 width;
 
@@ -274,7 +275,7 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 			}
 		}
 		rc = mdss_mdp_get_plane_sizes(format, width, pipe->src.h,
-			&ps, 0);
+			&ps, 0, 0);
 		if (rc)
 			return rc;
 
@@ -302,6 +303,8 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 		nlines = 8;
 	else
 		nlines = pipe->bwc_mode ? 1 : 2;
+
+	force_alloc = pipe->flags & MDP_SMP_FORCE_ALLOC;
 
 	mutex_lock(&mdss_mdp_smp_lock);
 
@@ -337,7 +340,7 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 		pr_debug("reserving %d mmb for pnum=%d plane=%d\n",
 				num_blks, pipe->num, i);
 		reserved = mdss_mdp_smp_mmb_reserve(pipe, &pipe->smp_map[i],
-			num_blks);
+			num_blks, force_alloc);
 		if (reserved < num_blks)
 			break;
 	}
@@ -893,6 +896,7 @@ static int mdss_mdp_image_setup(struct mdss_mdp_pipe *pipe,
 	u32 decimation;
 	struct mdss_mdp_img_rect sci, dst, src;
 	int ret = 0;
+	bool rotation = false;
 
 	pr_debug("pnum=%d wh=%dx%d src={%d,%d,%d,%d} dst={%d,%d,%d,%d}\n",
 			pipe->num, pipe->img_width, pipe->img_height,
@@ -901,8 +905,12 @@ static int mdss_mdp_image_setup(struct mdss_mdp_pipe *pipe,
 
 	width = pipe->img_width;
 	height = pipe->img_height;
+
+	if (pipe->flags & MDP_SOURCE_ROTATED_90)
+		rotation = true;
+
 	mdss_mdp_get_plane_sizes(pipe->src_fmt->format, width, height,
-			&pipe->src_planes, pipe->bwc_mode);
+			&pipe->src_planes, pipe->bwc_mode, rotation);
 
 	if (data != NULL) {
 		ret = mdss_mdp_data_check(data, &pipe->src_planes);
